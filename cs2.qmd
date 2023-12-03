@@ -1,0 +1,112 @@
+https://www2.stat.duke.edu/\~fl35/teaching/610-23F/docs/project/case-study-II.html
+
+# Load
+
+```{r, include=FALSE}
+library(tidyverse)
+library(lme4)
+library(pps)
+
+vote = read.csv('voter_stats_20201103.txt', sep = "\t")
+history = read.csv('history_stats_20201103.txt', sep = "\t")
+```
+
+# Cleaning
+
+## Aggregation:
+
+```{r}
+
+# history is actual voters
+history = history |> 
+  group_by(county_desc,
+           voted_party_cd,
+           race_code,
+           ethnic_code,
+           sex_code,
+           age) |> 
+  summarize(actual_voters = sum(total_voters)) |>
+  rename(party_cd = voted_party_cd)
+
+# registered voters
+vote = vote |> 
+  group_by(
+    county_desc,
+    party_cd,
+    race_code,
+    ethnic_code,
+    sex_code,
+    age
+  ) |> 
+  summarize(reg_voters = sum(total_voters))
+```
+
+## Combine datasets
+
+Notes:
+
+-   some proprtion \> 1, should remove
+-   no invalid ages
+-   party_cds from here: https://www.fec.gov/campaign-finance-data/party-code-descriptions/
+    -   had consitutional and green party not listed in data dict
+-   race code P from: https://www.dcf.ks.gov/services/PPS/Documents/PPM_Forms/Section_5000_Forms/PPS5460_Instr.pdf
+    -   two missing race code turned into undesignated
+
+```{r}
+total_voting = left_join(
+  vote,
+  history,
+  by = c("county_desc", "party_cd", "race_code", "ethnic_code", 
+         "sex_code", "age")
+  ) |> 
+  mutate(proportion = actual_voters / reg_voters, 
+         party = case_when(party_cd == "CST" ~ 'constitution',
+                           party_cd == "DEM" ~ 'democrat',
+                           party_cd == "GRE" ~ 'green',
+                           party_cd == "LIB" ~ 'libertarian',
+                           party_cd == "REP" ~ 'republican',
+                           party_cd == "UNA" ~ 'unaffiliated'),
+         race = case_when(race_code == "A" ~ "asian",
+                          race_code == "B" ~ "black",
+                          race_code == "I" ~ "indian_america",
+                          race_code == "M" ~ "two_or_more",
+                          race_code == "O" ~ "other",
+                          race_code == "W" ~ "white",
+                          race_code == "P" ~ "pacific_islander",
+                          TRUE ~ "undesignated"),
+         ethnicity = case_when(ethnic_code == "HL" ~ 'hispanic_latino',
+                               ethnic_code == "NL" ~ 'not_hispanic_latino',
+                               ethnic_code == "UN" ~ 'undesignated')) |> 
+  ungroup() |> 
+  select(-c(race_code, party_cd, ethnic_code))
+```
+
+# Sample the counties
+
+-   pps sample based on total registered voters
+-   100 total counties in dataset and confirmed online.
+
+```{r}
+set.seed(1782)
+
+# first aggregate everything so we can pps sample 
+aggregated = total_voting |> 
+  group_by(county_desc) |> 
+  summarize(total_registered = sum(reg_voters)) |> 
+  ungroup()
+
+# draw 37 samples with replacement
+county_index = ppss(aggregated$total_registered, 37)
+
+# print county list 
+samp_counties = unique(aggregated[county_index, ]$county_desc)
+print(samp_counties)
+```
+
+# Plots
+
+p. 4 of https://democracync.org/wp-content/uploads/2017/05/WhoVoted2016.pdf
+
+# Resources
+
+https://gvpt.umd.edu/sites/gvpt.umd.edu/files/pubs/Herrnson%20Hanmer%20Niemi%20AJPS%20Ballot%20and%20Errors.pdf
