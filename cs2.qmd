@@ -11,77 +11,64 @@ vote = read.csv('voter_stats_20201103.txt', sep = "\t")
 history = read.csv('history_stats_20201103.txt', sep = "\t")
 ```
 
-# Cleaning
-
-## Aggregation:
+# 1. Cleaning
 
 ```{r}
 
 # history is actual voters
-history = history |> 
+history = history |>
+  mutate(party = case_when(party_cd == "DEM" ~ 'Democrat',
+                           party_cd == "REP" ~ 'Republican',
+                           TRUE ~ "Other Party")) |> 
   group_by(county_desc,
-           voted_party_cd,
+           party,
            race_code,
            ethnic_code,
            sex_code,
            age) |> 
-  summarize(actual_voters = sum(total_voters)) |>
-  rename(party_cd = voted_party_cd)
+  summarize(actual_voters = sum(total_voters))
+
 
 # registered voters
 vote = vote |> 
+  mutate(party = case_when(party_cd == "DEM" ~ 'Democrat',
+                           party_cd == "REP" ~ 'Republican',
+                           TRUE ~ "Other Party")) |> 
   group_by(
     county_desc,
-    party_cd,
+    party,
     race_code,
     ethnic_code,
     sex_code,
     age
   ) |> 
   summarize(reg_voters = sum(total_voters))
-```
 
-## Combine datasets
 
-Notes:
-
--   some proprtion \> 1, should remove
--   no invalid ages
--   party_cds from here: https://www.fec.gov/campaign-finance-data/party-code-descriptions/
-    -   had consitutional and green party not listed in data dict
--   race code P from: https://www.dcf.ks.gov/services/PPS/Documents/PPM_Forms/Section_5000_Forms/PPS5460_Instr.pdf
-    -   two missing race code turned into undesignated
-
-```{r}
 total_voting = left_join(
   vote,
   history,
-  by = c("county_desc", "party_cd", "race_code", "ethnic_code", 
+  by = c("county_desc", "party", "race_code", "ethnic_code", 
          "sex_code", "age")
   ) |> 
-  mutate(proportion = actual_voters / reg_voters, 
-         party = case_when(party_cd == "CST" ~ 'constitution',
-                           party_cd == "DEM" ~ 'democrat',
-                           party_cd == "GRE" ~ 'green',
-                           party_cd == "LIB" ~ 'libertarian',
-                           party_cd == "REP" ~ 'republican',
-                           party_cd == "UNA" ~ 'unaffiliated'),
-         race = case_when(race_code == "A" ~ "asian",
-                          race_code == "B" ~ "black",
-                          race_code == "I" ~ "indian_america",
+  mutate(race = case_when(race_code == "A" ~ "Asian",
+                          race_code == "B" ~ "Black",
+                          race_code == "I" ~ "Native American",
                           race_code == "M" ~ "two_or_more",
-                          race_code == "O" ~ "other",
-                          race_code == "W" ~ "white",
-                          race_code == "P" ~ "pacific_islander",
-                          TRUE ~ "undesignated"),
-         ethnicity = case_when(ethnic_code == "HL" ~ 'hispanic_latino',
-                               ethnic_code == "NL" ~ 'not_hispanic_latino',
-                               ethnic_code == "UN" ~ 'undesignated')) |> 
+                          race_code == "O" ~ "Other Race",
+                          race_code == "W" ~ "White",
+                          race_code == "P" ~ "Pacific Islander",
+                          TRUE ~ "Undesig. Race"),
+         ethnicity = case_when(ethnic_code == "HL" ~ 'Hispanic Latino',
+                               ethnic_code == "NL" ~ 'Not Hispanic Latino',
+                               ethnic_code == "UN" ~ 'Undesig. Eth.'),
+         actual_voters = replace_na(actual_voters, 0),
+         turnout = actual_voters / reg_voters) |> 
   ungroup() |> 
-  select(-c(race_code, party_cd, ethnic_code))
+  select(-c(race_code, ethnic_code))
 ```
 
-# Sample the counties
+# 2. Sample the counties
 
 -   pps sample based on total registered voters
 -   100 total counties in dataset and confirmed online.
@@ -101,12 +88,90 @@ county_index = ppss(aggregated$total_registered, 37)
 # print county list 
 samp_counties = unique(aggregated[county_index, ]$county_desc)
 print(samp_counties)
+
+sampled_counties = total_voting |> 
+  filter(county_desc %in% samp_counties)
 ```
 
-# Plots
+# 3. Plots
 
-p. 4 of https://democracync.org/wp-content/uploads/2017/05/WhoVoted2016.pdf
+First aggregate data together to plot later.
 
-# Resources
+```{r}
+agg_char = bind_rows(
 
-https://gvpt.umd.edu/sites/gvpt.umd.edu/files/pubs/Herrnson%20Hanmer%20Niemi%20AJPS%20Ballot%20and%20Errors.pdf
+  sampled_counties |> 
+    group_by(race) |> 
+    summarize(mean_turnout = mean(turnout)) |>
+    mutate(id = race) |> 
+    select(id, mean_turnout),
+  
+  sampled_counties |> 
+    group_by(party) |> 
+    summarize(mean_turnout = mean(turnout)) |> 
+    mutate(id = party) |> 
+    ungroup() |> 
+    select(id, mean_turnout),
+  
+  sampled_counties |> 
+    group_by(age) |> 
+    summarize(mean_turnout = mean(turnout)) |> 
+    mutate(id = age) |> 
+    ungroup() |> 
+    select(id, mean_turnout),
+  
+  sampled_counties |> 
+    group_by(ethnicity) |> 
+    summarize(mean_turnout = mean(turnout)) |> 
+    mutate(id = ethnicity) |> 
+    ungroup() |> 
+    select(id, mean_turnout),
+  
+  sampled_counties |> 
+    group_by(sex_code, party) |> 
+    summarize(mean_turnout = mean(turnout)) |> 
+    mutate(id = paste(sex_code, party)) |> 
+    ungroup() |> 
+    select(id, mean_turnout),
+  
+  sampled_counties |> 
+    group_by(age, party) |> 
+    summarize(mean_turnout = mean(turnout)) |> 
+    mutate(id = paste(age, party)) |> 
+    ungroup() |> 
+    select(id, mean_turnout)
+  ) |> 
+  mutate(id = fct_reorder(id, mean_turnout))
+```
+
+## Plot 1
+
+```{r}
+agg_char |> 
+  ggplot(aes(x = mean_turnout, y = id, fill=mean_turnout)) + 
+  geom_col(width = 0.7) + 
+  scale_fill_gradient(low = "cadetblue3", high = "darkorchid3") + 
+  scale_x_continuous(breaks = seq(0, 1, by = 0.1)) + 
+  geom_vline(xintercept = 0.66, linewidth = 1, linetype = 'dashed') + 
+  labs(
+    title = "Mean Voter Turnout by Demographics in 30 Sampled Counties",
+    y = "",
+    x = "Mean Turnout"
+  ) + 
+    annotate(
+    "text",
+    x = 0.8,
+    y = 3,
+    label = "2020 U.S. \nAverage Turnout",
+    color = "black",
+    size = 3,
+    vjust = 0.5  # Adjust vertical position
+  )
+
+ggsave("voter_turnout.png", 
+       plot = last_plot(), width = 20, height = 20, units = 'cm')
+```
+
+# 4. Modeling
+
+lecture 5.2 p. 5
