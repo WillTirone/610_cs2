@@ -1,4 +1,7 @@
-https://www2.stat.duke.edu/\~fl35/teaching/610-23F/docs/project/case-study-II.html
+# Questions
+
+1.  Conf Int for random intercepts?
+2.  Same interpretation as binomial logistic regression?
 
 # Load
 
@@ -6,7 +9,8 @@ https://www2.stat.duke.edu/\~fl35/teaching/610-23F/docs/project/case-study-II.ht
 library(tidyverse)
 library(lme4)
 library(pps)
-library(lattice)
+library(cowplot)
+library(stargazer)
 
 vote = read.csv('voter_stats_20201103.txt', sep = "\t")
 history = read.csv('history_stats_20201103.txt', sep = "\t")
@@ -28,7 +32,6 @@ history = history |>
            sex_code,
            age) |> 
   summarize(actual_voters = sum(total_voters))
-
 
 # registered voters
 vote = vote |> 
@@ -73,7 +76,7 @@ total_voting = left_join(
 # 2. Sample the counties
 
 ```{r}
-set.seed(1782)
+set.seed(1780)
 
 # first aggregate everything so we can pps sample 
 aggregated = total_voting |> 
@@ -86,16 +89,11 @@ county_index = ppss(aggregated$total_registered, 37)
 
 # print county list 
 samp_counties = unique(aggregated[county_index, ]$county_desc)
+length(samp_counties)
 print(samp_counties)
 
 sampled_counties = total_voting |> 
   filter(county_desc %in% samp_counties)
-
-################################ SRS Approach ###################### 
-srs = sample(aggregated$county_desc, 30)
-
-srs_counties = total_voting |> 
-  filter(county_desc %in% srs)
 ```
 
 # 3. Plots
@@ -175,8 +173,8 @@ agg_char |>
     vjust = 0.5  # Adjust vertical position
   )
 
-ggsave("voter_turnout.png", 
-       plot = last_plot(), width = 20, height = 20, units = 'cm')
+ggsave("images/voter_turnout_demographics.png", 
+       plot = last_plot(), width = 8, height = 9, units = 'in')
 ```
 
 Boxplot for question 2
@@ -191,25 +189,51 @@ sampled_counties |>
     x = "County", 
     y = "Voter Turnout"
   )
+
+ggsave("images/voter_turnout_county.png", 
+       plot = last_plot(), width = 6.5, height = 4, units = 'in')
 ```
 
 Checking for random slopes
 
 ```{r}
 
-# question 3
-sampled_counties |> 
-  ggplot(aes(x = sex_code, y = turnout, color = party)) +
+# random slope for party? 
+p1 = sampled_counties |> 
+  ggplot(aes(x = county_desc, y = turnout, color = party)) +
   geom_jitter(size = 0.3) + 
   geom_smooth(method = "lm", se = FALSE, aes(group = party)) + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  labs(x = "")
 
-# question 4
-sampled_counties |> 
-  ggplot(aes(x = age, y = turnout, color = party)) +
+# random slope for sex? 
+p2 = sampled_counties |> 
+  ggplot(aes(x = county_desc, y = turnout, color = sex_code)) +
   geom_jitter(size = 0.3) + 
-  geom_smooth(method = "lm", se = FALSE, aes(group = party)) + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  geom_smooth(method = "lm", se = FALSE, aes(group = sex_code)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  labs(x = "")
+
+# random slope for sex? 
+p3 = sampled_counties |> 
+  ggplot(aes(x = county_desc, y = turnout, color = race)) +
+  geom_jitter(size = 0.3) + 
+  geom_smooth(method = "lm", se = FALSE, aes(group = race)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  labs(x = "")
+
+# random slope for ethnicity? 
+p4 = sampled_counties |> 
+  ggplot(aes(x = county_desc, y = turnout, color = ethnicity)) +
+  geom_jitter(size = 0.3) + 
+  geom_smooth(method = "lm", se = FALSE, aes(group = ethnicity)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  labs(x = "")
+
+combined_plots = plot_grid(p1, p2, p3, p4)
+
+ggsave("images/random_slopes.png", 
+       plot = last_plot(), width = 12, height = 6, units = 'in')
 ```
 
 # 4. Modeling
@@ -230,26 +254,15 @@ custom_dotplot = function(model) {
                       xmin = condval - 1.96 * condsd,
                       xmax = condval + 1.96 * condsd)) + 
     labs(
-      title = "PPS Sampled Counties", 
-      y = "County", 
-      x = "REPLACE THIS") + 
+      title = "Sampled Counties", 
+      y = "County") + 
     scale_x_continuous(breaks = seq(-1, 1, by = 0.1)) + 
     geom_vline(xintercept = 0, linetype = 'dashed')
 
 }
 ```
 
-## 4.1) Null model
-
-```{r}
-null_model = glm(cbind(actual_voters, reg_voters - actual_voters) ~ 1, 
-                 data = sampled_counties, 
-                 family = binomial)
-
-summary(null_model)
-```
-
-## 4.2 GLMM Models
+## 4.1) GLMM Models
 
 Interpretation:
 
@@ -261,17 +274,24 @@ m1 = glmer(cbind(actual_voters, reg_voters - actual_voters) ~ (1 | county_desc) 
            data = sampled_counties, 
            family = binomial)
 
-summary(m1)$coef
-```
-
-```{r}
+summary(m1)
 custom_dotplot(m1)
 ```
 
-SRS Approach
+Have to calculate confidence interval this way
 
 ```{r}
+m_test = glmer(cbind(actual_voters, reg_voters - actual_voters) ~
+                 (1 | county_desc), 
+           data = sampled_counties, 
+           family = binomial)
 
+confint(m_test, oldNames = FALSE)
+```
+
+SRS Approach - maybe include this plot at the end
+
+```{r}
 srs_model = glmer(cbind(actual_voters, reg_voters - actual_voters) ~ 
                     (1 | county_desc) +
            party + sex_code + age + race + ethnicity, 
@@ -279,4 +299,82 @@ srs_model = glmer(cbind(actual_voters, reg_voters - actual_voters) ~
            family = binomial)
 
 custom_dotplot(srs_model)
+```
+
+### 4.1.1) Final Model
+
+```{r}
+m2 = glmer(cbind(actual_voters, reg_voters - actual_voters) ~ (1 | county_desc) +
+           party*sex_code + party*age + race + ethnicity, 
+           data = sampled_counties, 
+           family = binomial)
+
+final_model = m2
+
+summary(m2)
+```
+
+Tried random slopes by county, fails to converge
+
+```{r}
+m3 = glmer(cbind(actual_voters, reg_voters - actual_voters) ~ (1 | county_desc) +
+           (party | county_desc) + party*sex_code + party*age + race + ethnicity, 
+           data = sampled_counties, 
+           family = binomial)
+
+m4 = glmer(cbind(actual_voters, reg_voters - actual_voters) ~ (1 | county_desc) +
+           (age | county_desc) + party*sex_code + party*age + race + ethnicity, 
+           data = sampled_counties, 
+           family = binomial)
+
+summary(m3)
+summary(m4)
+```
+
+Random intercepts, similar AIC as interaction model
+
+```{r}
+m5 = glmer(cbind(actual_voters, reg_voters - actual_voters) ~ (1 | county_desc) +
+           (1 | party:sex_code) + (1 | party:age) + race + ethnicity, 
+           data = sampled_counties, 
+           family = binomial)
+
+summary(m5)
+```
+
+# 5. Getting tables out
+
+```{r}
+custom_dotplot(final_model)
+
+ggsave("images/dotplot.png", 
+       plot = last_plot(), width = 8, height = 6, units = 'in')
+```
+
+Fixed effects table
+
+```{r}
+confint_table = data.frame(summary(final_model)$coefficients) |> 
+  select(Estimate, Std..Error) |> 
+  mutate(Estimate = exp(Estimate),
+         Std..Error = exp(Std..Error),
+         `lb_2.5%` = Estimate - Std..Error,
+         `ub_97.5%` = Estimate + Std..Error)
+
+stargazer(confint_table, summary = FALSE)
+```
+
+Random effects table
+
+```{r}
+ranef_coeffs = data.frame(ranef(final_model)) |> 
+  select(grp, condval, condsd) |> 
+  rename(estimate = condval, 
+         std_dev = condsd) |> 
+  mutate(estimate = exp(estimate),
+         std_dev = exp(std_dev),
+         `lb_2.5%` = estimate - 1.96 * std_dev,
+         `ub_97.5%` = estimate + 1.96 * std_dev)
+
+stargazer(ranef_coeffs, summary = FALSE)
 ```
